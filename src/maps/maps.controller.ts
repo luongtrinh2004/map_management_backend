@@ -43,7 +43,10 @@ export class MapsController {
     @Body('coordinate_system') coordinateSystem: string,
     @Body('description') description: string,
     @UploadedFiles()
-    files: { osm_file?: Express.Multer.File[]; pcd_file?: Express.Multer.File[] },
+    files: {
+      osm_file?: Express.Multer.File[];
+      pcd_file?: Express.Multer.File[];
+    },
   ) {
     return this.mapsService.uploadVersion(
       regionCode,
@@ -65,7 +68,11 @@ export class MapsController {
   }
 
   @Get('downloads/:vId/:type')
-  async downloadAsset(@Param('vId') vId: string, @Param('type') type: string, @Res() res: Response) {
+  async downloadAsset(
+    @Param('vId') vId: string,
+    @Param('type') type: string,
+    @Res() res: Response,
+  ) {
     const asset = await this.mapsService.getAsset(vId, type);
     res.download(asset.file_path, asset.file_name);
   }

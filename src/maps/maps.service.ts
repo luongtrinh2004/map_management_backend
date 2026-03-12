@@ -1,11 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { Region } from './schemas/region.schema';
-import { Version } from './schemas/version.schema';
-import { CreateRegionDto } from './dto/create-region.dto';
-import * as fs from 'fs';
-import * as path from 'path';
+import { Model } from 'mongoose';
+import { Region } from './schemas/region.schema.js';
+import { Version } from './schemas/version.schema.js';
+import { CreateRegionDto } from './dto/create-region.dto.js';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 @Injectable()
 export class MapsService {
@@ -20,13 +20,23 @@ export class MapsService {
     }
   }
 
-  async createRegion(dto: CreateRegionDto): Promise<Region> {
+  async createRegion(dto: CreateRegionDto): Promise<any> {
     const region = new this.regionModel(dto);
-    return region.save();
+    const saved = await region.save();
+    return {
+      id: (saved as any)._id.toString(),
+      name: saved.name,
+      code: saved.code,
+    };
   }
 
-  async findAllRegions(): Promise<Region[]> {
-    return this.regionModel.find().exec();
+  async findAllRegions(): Promise<any[]> {
+    const regions = await this.regionModel.find().exec();
+    return regions.map((r: any) => ({
+      id: r._id.toString(),
+      name: r.name,
+      code: r.code,
+    }));
   }
 
   async uploadVersion(
@@ -93,7 +103,7 @@ export class MapsService {
     const metadataPath = path.join(versionDir, 'metadata.json');
     fs.writeFileSync(metadataPath, JSON.stringify(metadataContent, null, 2));
 
-    return { status: 'success', version_id: savedVersion._id };
+    return { status: 'success', version_id: (savedVersion as any)._id.toString() };
   }
 
   async getVersions(regionCode: string) {
@@ -104,21 +114,16 @@ export class MapsService {
 
     const versions = await this.versionModel.find({ region_id: region._id }).sort({ createdAt: -1 }).exec();
 
-    return versions.map((v) => {
+    return versions.map((v: any) => {
       const downloads: Record<string, string> = {};
-      v.assets.forEach((a) => {
-        // We use the temporary id or index for download because in sub-documents _id is different
-        // For simplicity with the existing FE, we'll keep the logic but we need a way to serve file
-        // In Mongoose sub-docs, we can get the sub-doc id
-        // Wait, for simplicity let's use a convention or serve by path. 
-        // But the previous API used downloads/:id. Let's make it work.
-        downloads[a.asset_type] = `http://localhost:6060/api/downloads/${v._id}/${a.asset_type}`;
+      v.assets.forEach((a: any) => {
+        downloads[a.asset_type] = `http://localhost:6060/api/downloads/${v._id.toString()}/${a.asset_type}`;
       });
       return {
-        id: v._id,
+        id: v._id.toString(),
         version: v.version_name,
         status: v.status,
-        created_at: (v as any).createdAt,
+        created_at: v.createdAt || v.created_at,
         creator: v.creator,
         utm_zone: v.utm_zone,
         mgrs_zone: v.mgrs_zone,
@@ -130,10 +135,11 @@ export class MapsService {
   }
 
   async getAsset(versionId: string, assetType: string) {
-    const version = await this.versionModel.findById(versionId);
+    const version = await this.versionModel.findById(versionId).exec();
     if (!version) throw new NotFoundException('Version not found');
     
-    const asset = version.assets.find(a => a.asset_type === assetType);
+    // Use any for the asset object to bypass strict typing on sub-documents
+    const asset = (version as any).assets.find((a: any) => a.asset_type === assetType);
     if (!asset || !fs.existsSync(asset.file_path)) {
       throw new NotFoundException('File not found');
     }
@@ -156,13 +162,13 @@ export class MapsService {
     }
 
     const downloads: Record<string, string> = {};
-    latestVersion.assets.forEach((a) => {
-      downloads[a.asset_type] = `http://localhost:6060/api/downloads/${latestVersion._id}/${a.asset_type}`;
+    (latestVersion as any).assets.forEach((a: any) => {
+      downloads[a.asset_type] = `http://localhost:6060/api/downloads/${(latestVersion as any)._id.toString()}/${a.asset_type}`;
     });
 
     return {
       region: regionCode,
-      version: latestVersion.version_name,
+      version: (latestVersion as any).version_name,
       downloads,
     };
   }
