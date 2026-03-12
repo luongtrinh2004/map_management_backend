@@ -1,9 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { Region } from './schemas/region.schema.js';
-import { Version } from './schemas/version.schema.js';
-import { CreateRegionDto } from './dto/create-region.dto.js';
+import { Model, Types } from 'mongoose';
+import { Region } from './schemas/region.schema';
+import { Version, Asset } from './schemas/version.schema';
+import { CreateRegionDto } from './dto/create-region.dto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -24,7 +24,7 @@ export class MapsService {
     const region = new this.regionModel(dto);
     const saved = await region.save();
     return {
-      id: (saved as any)._id.toString(),
+      id: (saved._id).toString(),
       name: saved.name,
       code: saved.code,
     };
@@ -32,8 +32,8 @@ export class MapsService {
 
   async findAllRegions(): Promise<any[]> {
     const regions = await this.regionModel.find().exec();
-    return regions.map((r: any) => ({
-      id: r._id.toString(),
+    return regions.map((r) => ({
+      id: (r._id).toString(),
       name: r.name,
       code: r.code,
     }));
@@ -59,9 +59,9 @@ export class MapsService {
     const versionDir = path.join(this.UPLOAD_DIR, region.code, versionName);
     fs.mkdirSync(versionDir, { recursive: true });
 
-    const assets: any[] = [];
+    const assets: Partial<Asset>[] = [];
 
-    const saveFile = async (multerFile: Express.Multer.File, type: string) => {
+    const saveFile = (multerFile: Express.Multer.File, type: string) => {
       const filePath = path.join(versionDir, multerFile.originalname);
       fs.writeFileSync(filePath, multerFile.buffer);
       assets.push({
@@ -72,10 +72,10 @@ export class MapsService {
     };
 
     if (files.osm_file?.[0]) {
-      await saveFile(files.osm_file[0], 'OSM');
+      saveFile(files.osm_file[0], 'OSM');
     }
     if (files.pcd_file?.[0]) {
-      await saveFile(files.pcd_file[0], 'PCD');
+      saveFile(files.pcd_file[0], 'PCD');
     }
 
     const versionData = {
@@ -103,7 +103,7 @@ export class MapsService {
     const metadataPath = path.join(versionDir, 'metadata.json');
     fs.writeFileSync(metadataPath, JSON.stringify(metadataContent, null, 2));
 
-    return { status: 'success', version_id: (savedVersion as any)._id.toString() };
+    return { status: 'success', version_id: (savedVersion._id).toString() };
   }
 
   async getVersions(regionCode: string) {
@@ -112,18 +112,28 @@ export class MapsService {
       throw new NotFoundException('Region not found');
     }
 
-    const versions = await this.versionModel.find({ region_id: region._id }).sort({ createdAt: -1 }).exec();
+    // Use lean to avoid complex document types for this mapped response
+    const versions = await this.versionModel
+      .find({ region_id: region._id })
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
 
-    return versions.map((v: any) => {
+    return versions.map((v) => {
       const downloads: Record<string, string> = {};
-      v.assets.forEach((a: any) => {
-        downloads[a.asset_type] = `http://localhost:6060/api/downloads/${v._id.toString()}/${a.asset_type}`;
-      });
+      const vId = (v._id).toString();
+      
+      if (v.assets) {
+        v.assets.forEach((a) => {
+          downloads[a.asset_type] = `http://localhost:6060/api/downloads/${vId}/${a.asset_type}`;
+        });
+      }
+
       return {
-        id: v._id.toString(),
+        id: vId,
         version: v.version_name,
         status: v.status,
-        created_at: v.createdAt || v.created_at,
+        created_at: (v as any).createdAt || (v as any).created_at,
         creator: v.creator,
         utm_zone: v.utm_zone,
         mgrs_zone: v.mgrs_zone,
@@ -138,8 +148,7 @@ export class MapsService {
     const version = await this.versionModel.findById(versionId).exec();
     if (!version) throw new NotFoundException('Version not found');
     
-    // Use any for the asset object to bypass strict typing on sub-documents
-    const asset = (version as any).assets.find((a: any) => a.asset_type === assetType);
+    const asset = version.assets.find((a) => a.asset_type === assetType);
     if (!asset || !fs.existsSync(asset.file_path)) {
       throw new NotFoundException('File not found');
     }
@@ -155,20 +164,27 @@ export class MapsService {
     const latestVersion = await this.versionModel.findOne({
       region_id: region._id,
       status: 'STABLE'
-    }).sort({ createdAt: -1 }).exec();
+    })
+    .sort({ createdAt: -1 })
+    .lean()
+    .exec();
 
     if (!latestVersion) {
       throw new NotFoundException('No stable maps uploaded');
     }
 
     const downloads: Record<string, string> = {};
-    (latestVersion as any).assets.forEach((a: any) => {
-      downloads[a.asset_type] = `http://localhost:6060/api/downloads/${(latestVersion as any)._id.toString()}/${a.asset_type}`;
-    });
+    const vId = (latestVersion._id).toString();
+
+    if (latestVersion.assets) {
+      latestVersion.assets.forEach((a) => {
+        downloads[a.asset_type] = `http://localhost:6060/api/downloads/${vId}/${a.asset_type}`;
+      });
+    }
 
     return {
       region: regionCode,
-      version: (latestVersion as any).version_name,
+      version: latestVersion.version_name,
       downloads,
     };
   }

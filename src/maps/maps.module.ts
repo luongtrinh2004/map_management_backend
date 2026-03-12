@@ -1,9 +1,9 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { MapsController } from './maps.controller.js';
-import { MapsService } from './maps.service.js';
-import { Region, RegionSchema } from './schemas/region.schema.js';
-import { Version, VersionSchema } from './schemas/version.schema.js';
+import { MapsController } from './maps.controller';
+import { MapsService } from './maps.service';
+import { Region, RegionSchema } from './schemas/region.schema';
+import { Version, VersionSchema } from './schemas/version.schema';
 
 @Module({
   imports: [
