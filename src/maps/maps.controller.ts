@@ -27,6 +27,11 @@ export class MapsController {
     return this.mapsService.findAllRegions();
   }
 
+  @Get('stats')
+  getStats() {
+    return this.mapsService.getStats();
+  }
+
   @Post('versions/upload')
   @UseInterceptors(
     FileFieldsInterceptor([

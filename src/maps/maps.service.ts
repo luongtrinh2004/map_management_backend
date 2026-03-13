@@ -22,6 +22,22 @@ export class MapsService {
     }
   }
 
+  async getStats() {
+    const totalRegions = await this.regionModel.countDocuments().exec();
+    const totalVersions = await this.versionModel.countDocuments().exec();
+    const latestVersion = await this.versionModel
+      .findOne()
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+
+    return {
+      totalRegions,
+      totalVersions,
+      lastUpdated: latestVersion ? (latestVersion as any).createdAt : null,
+    };
+  }
+
   async createRegion(dto: CreateRegionDto): Promise<any> {
     const region = new this.regionModel(dto);
     const saved = await region.save();
