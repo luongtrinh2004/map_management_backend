@@ -81,4 +81,9 @@ export class MapsController {
   getLatestMap(@Param('code') code: string) {
     return this.mapsService.getLatestMap(code);
   }
+
+  @Get('previews/:vId/lanelet')
+  getLaneletPreview(@Param('vId') vId: string) {
+    return this.mapsService.getLaneletPreview(vId);
+  }
 }

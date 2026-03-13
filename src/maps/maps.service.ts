@@ -4,6 +4,7 @@ import { Model, Types } from 'mongoose';
 import { Region } from './schemas/region.schema';
 import { Version, Asset } from './schemas/version.schema';
 import { CreateRegionDto } from './dto/create-region.dto';
+import { LaneletConverterService } from './lanelet-converter.service';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -14,6 +15,7 @@ export class MapsService {
   constructor(
     @InjectModel(Region.name) private regionModel: Model<Region>,
     @InjectModel(Version.name) private versionModel: Model<Version>,
+    private readonly laneletConverter: LaneletConverterService,
   ) {
     if (!fs.existsSync(this.UPLOAD_DIR)) {
       fs.mkdirSync(this.UPLOAD_DIR, { recursive: true });
@@ -187,5 +189,15 @@ export class MapsService {
       version: latestVersion.version_name,
       downloads,
     };
+  }
+
+  async getLaneletPreview(versionId: string): Promise<any> {
+    const version = await this.versionModel.findById(versionId).exec();
+    if (!version) throw new NotFoundException('Version not found');
+
+    const osmAsset = version.assets.find(a => a.asset_type === 'OSM');
+    if (!osmAsset) throw new NotFoundException('No OSM asset found for this version');
+
+    return this.laneletConverter.convertToGeoJSON(osmAsset.file_path);
   }
 }

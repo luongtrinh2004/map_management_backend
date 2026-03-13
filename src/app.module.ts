@@ -9,7 +9,7 @@ import { MapsModule } from './maps/maps.module';
     MongooseModule.forRoot('mongodb://localhost:27017/ad_map_system'),
     ServeStaticModule.forRoot({
       rootPath: join(process.cwd(), 'public'),
-      exclude: ['/api/(.*)'],
+      exclude: ['/api/:path*'],
     }),
     MapsModule,
   ],
