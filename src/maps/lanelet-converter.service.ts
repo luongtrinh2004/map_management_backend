@@ -29,39 +29,77 @@ export class LaneletConverterService {
 
     const nodesMap = new Map<string, [number, number]>();
     const nodeElements = Array.isArray(osm.node) ? osm.node : [osm.node].filter(Boolean);
-    console.log(`Parsing OSM: ${nodeElements.length} nodes found.`);
     
     nodeElements.forEach((n: any) => {
-      const id = n.id?.toString();
-      const lon = parseFloat(n.lon);
-      const lat = parseFloat(n.lat);
+      // Handle both direct attributes and prefixed attributes (e.g. from different parser settings)
+      const id = (n.id || n['@_id'])?.toString();
+      const lon = parseFloat(n.lon || n['@_lon']);
+      const lat = parseFloat(n.lat || n['@_lat']);
       
-      if (id && !isNaN(lon) && !isNaN(lat) && (lon !== 0 || lat !== 0)) {
+      if (id && !isNaN(lon) && !isNaN(lat)) {
         nodesMap.set(id, [lon, lat]);
       }
     });
 
     const features: any[] = [];
 
+    // Process Nodes for Traffic Elements (Points)
+    nodeElements.forEach((n: any) => {
+      const tags = this.parseTags(n.tag);
+      // Lanelet2 often puts traffic information on nodes
+      if (tags.type === 'traffic_light' || tags.subtype === 'traffic_sign' || tags.type === 'traffic_sign' || tags.stop_line === 'yes') {
+        const id = (n.id || n['@_id'])?.toString();
+        const coord = nodesMap.get(id);
+        if (coord) {
+          features.push({
+            type: 'Feature',
+            properties: {
+              id,
+              element_type: 'point',
+              ...tags
+            },
+            geometry: {
+              type: 'Point',
+              coordinates: coord
+            }
+          });
+        }
+      }
+    });
+
     // Process Ways
     const wayElements = Array.isArray(osm.way) ? osm.way : [osm.way].filter(Boolean);
     wayElements.forEach((w: any) => {
       const coords: [number, number][] = [];
-      const nds = Array.isArray(w.nd) ? w.nd : [w.nd].filter(Boolean);
+      const ndElements = Array.isArray(w.nd) ? w.nd : [w.nd].filter(Boolean);
       
-      nds.forEach((nd: any) => {
-        const ref = nd.ref?.toString() || nd['@_ref']?.toString();
+      ndElements.forEach((nd: any) => {
+        const ref = (nd.ref || nd['@_ref'])?.toString();
         const coord = nodesMap.get(ref);
         if (coord) coords.push(coord);
       });
 
       if (coords.length > 1) {
         const tags = this.parseTags(w.tag);
+        
+        // Categorize way type for coloring
+        let displayType = 'other';
+        if (tags.type === 'line_thin' || tags.type === 'line_thick' || tags.subtype === 'solid' || tags.subtype === 'dashed') {
+           displayType = 'boundary';
+        } else if (tags.lane_change === 'yes' || tags.virtual === 'yes') {
+           displayType = 'virtual';
+        } else if (tags.type === 'curbstone' || tags.type === 'guard_rail') {
+           displayType = 'obstacle';
+        } else if (tags.type === 'stop_line' || tags.subtype === 'stop_line') {
+           displayType = 'stop_line';
+        }
+
         features.push({
           type: 'Feature',
           properties: {
-            id: w.id,
-            type: 'way',
+            id: w.id || w['@_id'],
+            element_type: 'way',
+            display_type: displayType,
             ...tags
           },
           geometry: {
@@ -72,7 +110,7 @@ export class LaneletConverterService {
       }
     });
 
-    console.log(`Parsing OSM: ${features.length} features generated.`);
+    console.log(`Converted OSM to GeoJSON: ${nodesMap.size} nodes, ${features.length} features.`);
 
     return {
       type: 'FeatureCollection',

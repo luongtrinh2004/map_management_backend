@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Region } from './schemas/region.schema';
@@ -58,7 +58,24 @@ export class MapsService {
       throw new NotFoundException('Region not found');
     }
 
-    const versionDir = path.join(this.UPLOAD_DIR, region.code, versionName);
+    let actualVersionName = versionName;
+    if (!/^v/i.test(actualVersionName)) {
+      actualVersionName = 'v' + actualVersionName;
+    }
+
+    const latestVersion = await this.versionModel
+      .findOne({ region_id: region._id })
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+
+    if (latestVersion) {
+      if (this.compareVersions(actualVersionName, latestVersion.version_name) <= 0) {
+        throw new BadRequestException(`Tên version mới phải lớn hơn version hiện tại (${latestVersion.version_name})`);
+      }
+    }
+
+    const versionDir = path.join(this.UPLOAD_DIR, region.code, actualVersionName);
     fs.mkdirSync(versionDir, { recursive: true });
 
     const assets: Partial<Asset>[] = [];
@@ -75,14 +92,33 @@ export class MapsService {
 
     if (files.osm_file?.[0]) {
       saveFile(files.osm_file[0], 'OSM');
+    } else if (latestVersion) {
+      const prevOsm = latestVersion.assets?.find(a => a.asset_type === 'OSM');
+      if (prevOsm) {
+        assets.push({
+          asset_type: 'OSM',
+          file_path: prevOsm.file_path,
+          file_name: prevOsm.file_name,
+        });
+      }
     }
+
     if (files.pcd_file?.[0]) {
       saveFile(files.pcd_file[0], 'PCD');
+    } else if (latestVersion) {
+      const prevPcd = latestVersion.assets?.find(a => a.asset_type === 'PCD');
+      if (prevPcd) {
+        assets.push({
+          asset_type: 'PCD',
+          file_path: prevPcd.file_path,
+          file_name: prevPcd.file_name,
+        });
+      }
     }
 
     const versionData = {
       region_id: region._id,
-      version_name: versionName,
+      version_name: actualVersionName,
       ...metadata,
       assets,
     };
@@ -93,7 +129,7 @@ export class MapsService {
     // Write metadata.json
     const metadataContent = {
       region: region.code,
-      version: versionName,
+      version: actualVersionName,
       created_at: new Date().toISOString().split('T')[0],
       creator: metadata.creator || 'mapping_team',
       utm_zone: metadata.utm_zone || '',
@@ -199,5 +235,20 @@ export class MapsService {
     if (!osmAsset) throw new NotFoundException('No OSM asset found for this version');
 
     return this.laneletConverter.convertToGeoJSON(osmAsset.file_path);
+  }
+
+  private compareVersions(v1: string, v2: string): number {
+    const normalize = (v: string) => v.replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+    const parts1 = normalize(v1);
+    const parts2 = normalize(v2);
+
+    const maxLength = Math.max(parts1.length, parts2.length);
+    for (let i = 0; i < maxLength; i++) {
+      const p1 = parts1[i] || 0;
+      const p2 = parts2[i] || 0;
+      if (p1 > p2) return 1;
+      if (p1 < p2) return -1;
+    }
+    return 0;
   }
 }
