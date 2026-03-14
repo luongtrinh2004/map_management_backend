@@ -91,4 +91,10 @@ export class MapsController {
   getLaneletPreview(@Param('vId') vId: string) {
     return this.mapsService.getLaneletPreview(vId);
   }
+
+  @Get('previews/:vId/pcd')
+  async getPcdPreview(@Param('vId') vId: string, @Res() res: Response) {
+    const previewPath = await this.mapsService.getPcdPreviewPath(vId);
+    res.download(previewPath, 'preview.pcd');
+  }
 }

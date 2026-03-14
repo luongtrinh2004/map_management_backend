@@ -43,6 +43,9 @@ export class Version extends Document {
 
   @Prop({ type: [AssetSchema], default: [] })
   assets: Asset[];
+
+  @Prop({ type: Object })
+  analysis?: Record<string, any>;
 }
 
 export const VersionSchema = SchemaFactory.createForClass(Version);

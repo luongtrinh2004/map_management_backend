@@ -3,6 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { MapsController } from './maps.controller';
 import { MapsService } from './maps.service';
 import { LaneletConverterService} from './lanelet-converter.service';
+import { PcdOptimizerService } from './pcd-optimizer.service';
 import { Region, RegionSchema } from './schemas/region.schema';
 import { Version, VersionSchema } from './schemas/version.schema';
 
@@ -14,6 +15,6 @@ import { Version, VersionSchema } from './schemas/version.schema';
     ]),
   ],
   controllers: [MapsController],
-  providers: [MapsService, LaneletConverterService],
+  providers: [MapsService, LaneletConverterService, PcdOptimizerService],
 })
 export class MapsModule {}

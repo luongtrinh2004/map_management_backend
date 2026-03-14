@@ -5,6 +5,7 @@ import { Region } from './schemas/region.schema';
 import { Version, Asset } from './schemas/version.schema';
 import { CreateRegionDto } from './dto/create-region.dto';
 import { LaneletConverterService } from './lanelet-converter.service';
+import { PcdOptimizerService } from './pcd-optimizer.service';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -16,6 +17,7 @@ export class MapsService {
     @InjectModel(Region.name) private regionModel: Model<Region>,
     @InjectModel(Version.name) private versionModel: Model<Version>,
     private readonly laneletConverter: LaneletConverterService,
+    private readonly pcdOptimizer: PcdOptimizerService,
   ) {
     if (!fs.existsSync(this.UPLOAD_DIR)) {
       fs.mkdirSync(this.UPLOAD_DIR, { recursive: true });
@@ -132,11 +134,54 @@ export class MapsService {
       }
     }
 
+    // Phase 3: Smart Diff Analysis Computation
+    const analysis: Record<string, any> = {};
+    try {
+      if (latestVersion) {
+        // Compare OSM
+        const prevOsm = latestVersion.assets?.find(a => a.asset_type === 'OSM');
+        const newOsm = assets.find(a => a.asset_type === 'OSM');
+        if (prevOsm && newOsm) {
+          const prevContent = fs.readFileSync(prevOsm.file_path as string, 'utf8');
+          const newContent = fs.readFileSync(newOsm.file_path as string, 'utf8');
+          
+          const prevNodeCount = (prevContent.match(/<node /g) || []).length;
+          const preWayCount = (prevContent.match(/<way /g) || []).length;
+          const newNodeCount = (newContent.match(/<node /g) || []).length;
+          const newWayCount = (newContent.match(/<way /g) || []).length;
+          
+          analysis.osmNodesDiff = newNodeCount - prevNodeCount;
+          analysis.osmWaysDiff = newWayCount - preWayCount;
+        }
+
+        // Compare PCD
+        const prevPcd = latestVersion.assets?.find(a => a.asset_type === 'PCD');
+        const newPcd = assets.find(a => a.asset_type === 'PCD');
+        if (prevPcd && newPcd && prevPcd.file_path !== newPcd.file_path) {
+          const prevSize = fs.statSync(prevPcd.file_path as string).size;
+          const newSize = fs.statSync(newPcd.file_path as string).size;
+          const sizeDiffPercent = prevSize > 0 ? ((newSize - prevSize) / prevSize) * 100 : 0;
+          analysis.pcdSizeDiffPercent = parseFloat(sizeDiffPercent.toFixed(2));
+        }
+      } else {
+        const newOsm = assets.find(a => a.asset_type === 'OSM');
+        if (newOsm) {
+          const newContent = fs.readFileSync(newOsm.file_path as string, 'utf8');
+          analysis.osmNodesDiff = (newContent.match(/<node /g) || []).length;
+          analysis.osmWaysDiff = (newContent.match(/<way /g) || []).length;
+          analysis.isInitial = true;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to compute smart diff analysis:', err);
+    }
+
     const versionData = {
       region_id: region._id,
       version_name: actualVersionName,
       ...metadata,
       assets,
+      analysis,
     };
 
     const newVersion = new this.versionModel(versionData);
@@ -193,6 +238,7 @@ export class MapsService {
         mgrs_zone: v.mgrs_zone,
         coordinate_system: v.coordinate_system,
         description: v.description,
+        analysis: v.analysis,
         downloads,
       };
     });
@@ -251,6 +297,19 @@ export class MapsService {
     if (!osmAsset) throw new NotFoundException('No OSM asset found for this version');
 
     return this.laneletConverter.convertToGeoJSON(osmAsset.file_path);
+  }
+
+  async getPcdPreviewPath(versionId: string): Promise<string> {
+    const version = await this.versionModel.findById(versionId).exec();
+    if (!version) throw new NotFoundException('Version not found');
+
+    const asset = version.assets.find(a => a.asset_type === 'PCD');
+    if (!asset || !fs.existsSync(asset.file_path)) {
+      throw new NotFoundException('PCD Asset not found');
+    }
+
+    // Try to return optimized preview, fallback to original if fail
+    return this.pcdOptimizer.createPreview(asset.file_path, 10);
   }
 
   private compareVersions(v1: string, v2: string): number {
