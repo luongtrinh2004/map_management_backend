@@ -27,6 +27,28 @@ export class PcdOptimizerService {
     }
   }
 
+  async getPcdSummary(filePath: string): Promise<any> {
+    if (!fs.existsSync(filePath)) return null;
+    try {
+      const fd = fs.openSync(filePath, 'r');
+      const buffer = Buffer.alloc(1024); // PCD header is usually small
+      fs.readSync(fd, buffer, 0, 1024, 0);
+      fs.closeSync(fd);
+
+      const content = buffer.toString('utf-8');
+      const pointsLine = content.split('\n').find(l => l.startsWith('POINTS'));
+      if (!pointsLine) return null;
+
+      const points = parseInt(pointsLine.split(' ')[1], 10);
+      return {
+        pointCount: points,
+        fileSize: fs.statSync(filePath).size
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
   private async downsamplePcd(inputPath: string, outputPath: string, percent: number): Promise<void> {
     return new Promise((resolve, reject) => {
       fs.readFile(inputPath, (err, data) => {

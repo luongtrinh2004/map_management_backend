@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { ConfigService } from '@nestjs/config';
 import { Region } from './schemas/region.schema';
 import { Version, Asset } from './schemas/version.schema';
 import { CreateRegionDto } from './dto/create-region.dto';
@@ -18,6 +19,7 @@ export class MapsService {
     @InjectModel(Version.name) private versionModel: Model<Version>,
     private readonly laneletConverter: LaneletConverterService,
     private readonly pcdOptimizer: PcdOptimizerService,
+    private readonly configService: ConfigService,
   ) {
     if (!fs.existsSync(this.UPLOAD_DIR)) {
       fs.mkdirSync(this.UPLOAD_DIR, { recursive: true });
@@ -137,41 +139,52 @@ export class MapsService {
     // Phase 3: Smart Diff Analysis Computation
     const analysis: Record<string, any> = {};
     try {
-      if (latestVersion) {
-        // Compare OSM
-        const prevOsm = latestVersion.assets?.find(a => a.asset_type === 'OSM');
-        const newOsm = assets.find(a => a.asset_type === 'OSM');
-        if (prevOsm && newOsm) {
-          const prevContent = fs.readFileSync(prevOsm.file_path as string, 'utf8');
-          const newContent = fs.readFileSync(newOsm.file_path as string, 'utf8');
-          
-          const prevNodeCount = (prevContent.match(/<node /g) || []).length;
-          const preWayCount = (prevContent.match(/<way /g) || []).length;
-          const newNodeCount = (newContent.match(/<node /g) || []).length;
-          const newWayCount = (newContent.match(/<way /g) || []).length;
-          
-          analysis.osmNodesDiff = newNodeCount - prevNodeCount;
-          analysis.osmWaysDiff = newWayCount - preWayCount;
-        }
+      const newOsmAsset = assets.find(a => a.asset_type === 'OSM');
+      const latestVersionOsm = latestVersion?.assets?.find(a => a.asset_type === 'OSM');
 
-        // Compare PCD
-        const prevPcd = latestVersion.assets?.find(a => a.asset_type === 'PCD');
-        const newPcd = assets.find(a => a.asset_type === 'PCD');
-        if (prevPcd && newPcd && prevPcd.file_path !== newPcd.file_path) {
-          const prevSize = fs.statSync(prevPcd.file_path as string).size;
-          const newSize = fs.statSync(newPcd.file_path as string).size;
-          const sizeDiffPercent = prevSize > 0 ? ((newSize - prevSize) / prevSize) * 100 : 0;
-          analysis.pcdSizeDiffPercent = parseFloat(sizeDiffPercent.toFixed(2));
-        }
-      } else {
-        const newOsm = assets.find(a => a.asset_type === 'OSM');
-        if (newOsm) {
-          const newContent = fs.readFileSync(newOsm.file_path as string, 'utf8');
-          analysis.osmNodesDiff = (newContent.match(/<node /g) || []).length;
-          analysis.osmWaysDiff = (newContent.match(/<way /g) || []).length;
-          analysis.isInitial = true;
+      if (newOsmAsset) {
+        const newSummary = await this.laneletConverter.getOsmSummary(newOsmAsset.file_path as string);
+        if (newSummary) {
+          if (latestVersion && latestVersionOsm) {
+            const prevSummary = await this.laneletConverter.getOsmSummary(latestVersionOsm.file_path as string);
+            if (prevSummary) {
+              analysis.osmNodesDiff = newSummary.nodeCount - prevSummary.nodeCount;
+              analysis.osmWaysDiff = newSummary.wayCount - prevSummary.wayCount;
+              analysis.osmTrafficLightsDiff = newSummary.trafficLightCount - prevSummary.trafficLightCount;
+              analysis.osmTrafficSignsDiff = newSummary.trafficSignCount - prevSummary.trafficSignCount;
+            }
+          } else {
+            analysis.osmNodesDiff = newSummary.nodeCount;
+            analysis.osmWaysDiff = newSummary.wayCount;
+            analysis.osmTrafficLightsDiff = newSummary.trafficLightCount;
+            analysis.osmTrafficSignsDiff = newSummary.trafficSignCount;
+            analysis.isInitial = true;
+          }
         }
       }
+
+      // Compare PCD
+      const newPcdAsset = assets.find(a => a.asset_type === 'PCD');
+      const latestVersionPcd = latestVersion?.assets?.find(a => a.asset_type === 'PCD');
+
+      if (newPcdAsset) {
+        const newPcdSummary = await this.pcdOptimizer.getPcdSummary(newPcdAsset.file_path as string);
+        if (newPcdSummary) {
+          if (latestVersion && latestVersionPcd) {
+            const prevPcdSummary = await this.pcdOptimizer.getPcdSummary(latestVersionPcd.file_path as string);
+            if (prevPcdSummary) {
+              analysis.pcdPointsDiff = newPcdSummary.pointCount - prevPcdSummary.pointCount;
+              const sizeDiffPercent = prevPcdSummary.fileSize > 0 ? ((newPcdSummary.fileSize - prevPcdSummary.fileSize) / prevPcdSummary.fileSize) * 100 : 0;
+              analysis.pcdSizeDiffPercent = parseFloat(sizeDiffPercent.toFixed(2));
+            }
+          } else {
+            analysis.pcdPointsCount = newPcdSummary.pointCount;
+            analysis.pcdSize = newPcdSummary.fileSize;
+          }
+        }
+      }
+
+      analysis.isAligned = !!(assets.find(a => a.asset_type === 'OSM') && assets.find(a => a.asset_type === 'PCD'));
     } catch (err) {
       console.error('Failed to compute smart diff analysis:', err);
     }
@@ -223,8 +236,9 @@ export class MapsService {
       const vId = (v._id).toString();
       
       if (v.assets) {
+        const baseUrl = this.configService.get<string>('BASE_URL') || 'http://localhost:6060';
         v.assets.forEach((a) => {
-          downloads[a.asset_type] = `http://localhost:6060/api/downloads/${vId}/${a.asset_type}`;
+          downloads[a.asset_type] = `${baseUrl}/api/downloads/${vId}/${a.asset_type}`;
         });
       }
 
@@ -277,8 +291,9 @@ export class MapsService {
     const vId = (latestVersion._id).toString();
 
     if (latestVersion.assets) {
+      const baseUrl = this.configService.get<string>('BASE_URL') || 'http://localhost:6060';
       latestVersion.assets.forEach((a) => {
-        downloads[a.asset_type] = `http://localhost:6060/api/downloads/${vId}/${a.asset_type}`;
+        downloads[a.asset_type] = `${baseUrl}/api/downloads/${vId}/${a.asset_type}`;
       });
     }
 
@@ -325,5 +340,87 @@ export class MapsService {
       if (p1 < p2) return -1;
     }
     return 0;
+  }
+
+  async updateVersionStatus(versionId: string, status: string) {
+    const version = await this.versionModel.findByIdAndUpdate(
+      versionId,
+      { status },
+      { new: true },
+    );
+    if (!version) {
+      throw new NotFoundException('Version not found');
+    }
+    return { success: true, status: version.status };
+  }
+
+  async rollbackVersion(versionId: string) {
+    const oldVersion = await this.versionModel.findById(versionId).exec();
+    if (!oldVersion) throw new NotFoundException('Target version not found');
+
+    const region = await this.regionModel.findById(oldVersion.region_id).exec();
+    if (!region) throw new NotFoundException('Region not found');
+
+    const latestVersion = await this.versionModel
+      .findOne({ region_id: region._id })
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+
+    let newVersionName = 'v1.0';
+    if (latestVersion) {
+      const parts = latestVersion.version_name.replace(/^v/i, '').split('.').map(Number);
+      parts[parts.length - 1] += 1;
+      newVersionName = 'v' + parts.join('.');
+    }
+
+    const versionDir = path.join(this.UPLOAD_DIR, region.code, newVersionName);
+    fs.mkdirSync(versionDir, { recursive: true });
+
+    const assets: Partial<Asset>[] = [];
+
+    // Copy assets from old version
+    for (const asset of oldVersion.assets) {
+      const newFilePath = path.join(versionDir, asset.file_name);
+      if (fs.existsSync(asset.file_path)) {
+        fs.copyFileSync(asset.file_path, newFilePath);
+        assets.push({
+          asset_type: asset.asset_type,
+          file_name: asset.file_name,
+          file_path: newFilePath,
+        });
+      }
+    }
+
+    const versionData = {
+      region_id: region._id,
+      version_name: newVersionName,
+      status: 'STABLE',
+      creator: 'Auto-Rollback',
+      utm_zone: oldVersion.utm_zone,
+      mgrs_zone: oldVersion.mgrs_zone,
+      coordinate_system: oldVersion.coordinate_system,
+      description: `Auto-Rollback from ${oldVersion.version_name}`,
+      assets,
+      analysis: {
+        isInitial: false,
+        rollbackFrom: oldVersion.version_name
+      }
+    };
+
+    const newVersionModel = new this.versionModel(versionData);
+    await newVersionModel.save();
+
+    const metadataContent = {
+      region: region.code,
+      version: newVersionName,
+      created_at: new Date().toISOString().split('T')[0],
+      creator: versionData.creator,
+      description: versionData.description
+    };
+    
+    fs.writeFileSync(path.join(versionDir, 'metadata.json'), JSON.stringify(metadataContent, null, 2));
+
+    return { success: true, new_version: newVersionName };
   }
 }

@@ -97,4 +97,17 @@ export class MapsController {
     const previewPath = await this.mapsService.getPcdPreviewPath(vId);
     res.download(previewPath, 'preview.pcd');
   }
+
+  @Post('versions/:vId/status')
+  updateVersionStatus(
+    @Param('vId') vId: string,
+    @Body('status') status: string,
+  ) {
+    return this.mapsService.updateVersionStatus(vId, status);
+  }
+
+  @Post('versions/:vId/rollback')
+  rollbackVersion(@Param('vId') vId: string) {
+    return this.mapsService.rollbackVersion(vId);
+  }
 }

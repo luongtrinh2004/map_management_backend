@@ -118,6 +118,38 @@ export class LaneletConverterService {
     };
   }
 
+  async getOsmSummary(filePath: string): Promise<any> {
+    if (!fs.existsSync(filePath)) return null;
+    try {
+      const xmlData = fs.readFileSync(filePath, 'utf-8');
+      const jsonObj = this.parser.parse(xmlData);
+      const osm = jsonObj.osm;
+      if (!osm) return null;
+
+      const nodes = Array.isArray(osm.node) ? osm.node : [osm.node].filter(Boolean);
+      const ways = Array.isArray(osm.way) ? osm.way : [osm.way].filter(Boolean);
+      const relations = Array.isArray(osm.relation) ? osm.relation : [osm.relation].filter(Boolean);
+
+      let trafficLights = 0;
+      let trafficSigns = 0;
+      nodes.forEach((n: any) => {
+        const tags = this.parseTags(n.tag);
+        if (tags.type === 'traffic_light' || tags.subtype === 'traffic_light') trafficLights++;
+        if (tags.type === 'traffic_sign' || tags.subtype === 'traffic_sign') trafficSigns++;
+      });
+
+      return {
+        nodeCount: nodes.length,
+        wayCount: ways.length,
+        relationCount: relations.length,
+        trafficLightCount: trafficLights,
+        trafficSignCount: trafficSigns,
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
   private parseTags(tags: any): Record<string, string> {
     const result: Record<string, string> = {};
     if (!tags) return result;
